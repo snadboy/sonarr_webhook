@@ -23,6 +23,7 @@ app = FastAPI()
 
 # Initialize Sonarr client with our configured logger
 sonarr = Sonarr(log_level=log_level, logger=logger)
+cal = sonarr.get_episodes_calendar(past_days=7, future_days=7)
 
 @app.post("/webhook")
 async def webhook(request: Request):
