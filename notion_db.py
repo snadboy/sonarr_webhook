@@ -63,6 +63,7 @@ class NotionDB:
             NotionDBError: If database retrieval fails
         """
         try:
+            self.logger.debug(f"Getting schema for database {database_id}")
             response = self.client.databases.retrieve(database_id=database_id)
             self.logger.debug(f"Retrieved schema for database {database_id}")
             return response['properties']
@@ -85,6 +86,7 @@ class NotionDB:
             NotionDBError: If deletion fails
         """
         try:
+            self.logger.debug(f"Deleting database {database_id}")
             self.client.blocks.delete(block_id=database_id)
             self.logger.info(f"Successfully deleted database {database_id}")
             return True
@@ -109,6 +111,7 @@ class NotionDB:
             NotionDBError: If database creation fails
         """
         try:
+            self.logger.debug(f"Creating database {title} in page {parent_page_id}")
             response = self.client.databases.create(
                 parent={"type": "page_id", "page_id": parent_page_id},
                 title=[{"type": "text", "text": {"content": title}}],
@@ -140,12 +143,14 @@ class NotionDB:
         """
         try:
             if page_id:
+                self.logger.debug(f"Updating row {page_id} in database {database_id}")
                 response = self.client.pages.update(
                     page_id=page_id,
                     properties=properties
                 )
                 self.logger.debug(f"Updated row {page_id} in database {database_id}")
             else:
+                self.logger.debug(f"Creating new row in database {database_id}")
                 response = self.client.pages.create(
                     parent={"database_id": database_id},
                     properties=properties
@@ -172,6 +177,7 @@ class NotionDB:
             NotionDBError: If fetch fails
         """
         try:
+            self.logger.debug(f"Getting row {page_id}")
             response = self.client.pages.retrieve(page_id=page_id)
             self.logger.debug(f"Retrieved row {page_id}")
             return response['properties']
@@ -197,6 +203,7 @@ class NotionDB:
             NotionDBError: If query fails
         """
         try:
+            self.logger.debug(f"Querying database {database_id}")
             query_params = {}
             if filter_obj:
                 query_params['filter'] = filter_obj
@@ -218,60 +225,37 @@ class NotionDB:
     
     def get_child_databases(self, page_id: str) -> List[Dict[str, Any]]:
         """
-        Get all child databases of a page
+        Get all child databases in a page
         
         Args:
-            page_id (str): ID of the parent page
+            page_id (str): Notion page ID
             
         Returns:
             List[Dict[str, Any]]: List of child databases with their properties
             
         Raises:
-            NotionDBError: If retrieval fails
+            NotionDBError: If API request fails
         """
         try:
-            blocks = []
-            cursor = None
-            
-            while True:
-                response = self.client.blocks.children.list(
-                    block_id=page_id,
-                    start_cursor=cursor
-                )
-                
-                # Filter for database blocks
-                db_blocks = [
-                    block for block in response['results'] 
-                    if block['type'] == 'child_database'
-                ]
-                blocks.extend(db_blocks)
-                
-                if not response.get('has_more'):
-                    break
-                    
-                cursor = response.get('next_cursor')
-            
-            # For each database block, get its full details
+            self.logger.debug(f"Getting child databases for page {page_id}")
+            response = self.client.blocks.children.list(block_id=page_id)
             databases = []
-            for block in blocks:
-                try:
-                    db_details = self.client.databases.retrieve(database_id=block['id'])
+            
+            for block in response['results']:
+                if block['type'] == 'child_database':
+                    self.logger.debug(f"Found child database: {block['id']}")
+                    db_info = self.client.databases.retrieve(database_id=block['id'])
                     databases.append({
                         'id': block['id'],
-                        'title': db_details['title'][0]['text']['content'] if db_details['title'] else 'Untitled',
-                        'properties': db_details['properties'],
-                        'created_time': block['created_time'],
-                        'last_edited_time': block['last_edited_time']
+                        'title': block['child_database']['title'],
+                        'properties': db_info['properties']
                     })
-                except APIResponseError as e:
-                    self.logger.warning(f"Could not retrieve details for database {block['id']}: {str(e)}")
-                    continue
             
-            self.logger.debug(f"Found {len(databases)} child databases in page {page_id}")
+            self.logger.debug(f"Found {len(databases)} child databases")
             return databases
             
         except APIResponseError as e:
-            error_msg = f"Failed to retrieve child databases: {str(e)}"
+            error_msg = f"Failed to get child databases: {str(e)}"
             self.logger.error(error_msg)
             raise NotionDBError(error_msg) from e
 
@@ -289,6 +273,7 @@ class NotionDB:
             NotionDBError: If deletion fails
         """
         try:
+            self.logger.debug(f"Clearing database {database_id}")
             deleted_count = 0
             has_more = True
             start_cursor = None
