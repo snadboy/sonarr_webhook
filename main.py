@@ -67,11 +67,12 @@ def main():
         logger.error(f"Failed to get channel stats: {str(e)}")
         raise
 
-    cs = notion.get_child_databases(page_id='14c84b8f894080458002f0463ce6175b')
+    notion_telly_children = notion.get_child_databases(page_id=os.getenv('NOTION_PAGE_ID_TELLY'))
     cals = sonarr.get_episodes_calendar(14, 14)
     series_cache = {}  # Cache for series data
 
-    notion.clear_database(cs[3]['id'])
+    # Clear and update the "Upcoming Episodes" database
+    notion.clear_database(notion_telly_children['Upcoming Episodes']['id'])
     for cal in cals:
         # Get series info from cache or API
         series_id = cal['seriesId']
@@ -89,7 +90,7 @@ def main():
             "Name": notion.format_property(NotionPropertyType.TITLE, show_title),
             "Date": notion.format_property(NotionPropertyType.DATE, cal.get('airDate', '2024-12-03')),
         }
-        notion.create_or_update_row(database_id=cs[3]['id'], properties=properties)
+        notion.create_or_update_row(database_id=notion_telly_children['Upcoming Episodes']['id'], properties=properties)
 
     # Initialize FastAPI app
     app = initialize_api(sonarr)

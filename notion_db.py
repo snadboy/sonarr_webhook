@@ -223,7 +223,7 @@ class NotionDB:
             self.logger.error(error_msg)
             raise NotionDBError(error_msg) from e
     
-    def get_child_databases(self, page_id: str) -> List[Dict[str, Any]]:
+    def get_child_databases(self, page_id: str) -> Dict[str, Dict[str, Any]]:
         """
         Get all child databases in a page
         
@@ -231,7 +231,11 @@ class NotionDB:
             page_id (str): Notion page ID
             
         Returns:
-            List[Dict[str, Any]]: List of child databases with their properties
+            Dict[str, Dict[str, Any]]: Dictionary of databases with titles as keys.
+                Each database entry contains:
+                - id: Database ID
+                - title: Database title
+                - properties: Database properties
             
         Raises:
             NotionDBError: If API request fails
@@ -239,19 +243,20 @@ class NotionDB:
         try:
             self.logger.debug(f"Getting child databases for page {page_id}")
             response = self.client.blocks.children.list(block_id=page_id)
-            databases = []
+            databases = {}
             
             for block in response['results']:
                 if block['type'] == 'child_database':
                     self.logger.debug(f"Found child database: {block['id']}")
                     db_info = self.client.databases.retrieve(database_id=block['id'])
-                    databases.append({
+                    title = block['child_database']['title']
+                    databases[title] = {
                         'id': block['id'],
-                        'title': block['child_database']['title'],
+                        'title': title,
                         'properties': db_info['properties']
-                    })
+                    }
             
-            self.logger.debug(f"Found {len(databases)} child databases")
+            self.logger.debug(f"Found {len(databases)} child databases: {', '.join(databases.keys())}")
             return databases
             
         except APIResponseError as e:
