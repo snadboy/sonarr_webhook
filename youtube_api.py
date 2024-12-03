@@ -209,7 +209,13 @@ class YouTubeAPI:
                         'title': item['snippet']['title'],
                         'description': item['snippet']['description'],
                         'published_at': item['snippet']['publishedAt'],
-                        'thumbnail': item['snippet']['thumbnails']['default']['url'],
+                        'thumbnails': {
+                            'default': item['snippet']['thumbnails'].get('default', {}).get('url'),
+                            'medium': item['snippet']['thumbnails'].get('medium', {}).get('url'),
+                            'high': item['snippet']['thumbnails'].get('high', {}).get('url'),
+                            'standard': item['snippet']['thumbnails'].get('standard', {}).get('url'),
+                            'maxres': item['snippet']['thumbnails'].get('maxres', {}).get('url'),
+                        },
                         **stats
                     })
                 
