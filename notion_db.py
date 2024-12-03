@@ -25,16 +25,29 @@ class NotionPropertyType(Enum):
     FILES = "files"
 
 class NotionDB:
-    def __init__(self, token: str, logger: Optional[logging.Logger] = None):
+    def __init__(self, token: str, log_level: int = logging.INFO, logger: Optional[logging.Logger] = None):
         """
         Initialize Notion DB client
         
         Args:
             token (str): Notion integration token
+            log_level (int): Logging level (default: logging.INFO)
             logger (Optional[logging.Logger]): Custom logger instance
         """
         self.client = Client(auth=token)
-        self.logger = logger or logging.getLogger(__name__)
+        if logger:
+            self.logger = logger
+        else:
+            self.logger = logging.getLogger(__name__)
+            if not self.logger.handlers:
+                handler = logging.StreamHandler()
+                handler.setLevel(log_level)
+                formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                handler.setFormatter(formatter)
+                self.logger.addHandler(handler)
+        
+        self.logger.setLevel(log_level)
+        self.logger.info("Notion DB client initialized successfully")
     
     def get_database_schema(self, database_id: str) -> Dict[str, Any]:
         """

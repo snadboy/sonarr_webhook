@@ -11,17 +11,16 @@ class SonarrError(Exception):
     pass
 
 class Sonarr:
-    def __init__(self, log_level: int = logging.INFO, logger: Optional[logging.Logger] = None):
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, log_level: int = logging.INFO, logger: Optional[logging.Logger] = None):
         """
         Initialize Sonarr client
         
         Args:
+            api_key (Optional[str]): Sonarr API key (default: from env SONARR_API_KEY)
+            base_url (Optional[str]): Sonarr base URL (default: from env SONARR_URL)
             log_level (int): Logging level (default: logging.INFO)
-            logger (Optional[logging.Logger]): Custom logger instance (default: None)
+            logger (Optional[logging.Logger]): Custom logger instance
         """
-        # Load environment variables
-        load_dotenv()
-        
         # Setup logging
         if logger:
             self.logger = logger
@@ -36,12 +35,15 @@ class Sonarr:
         
         self.logger.setLevel(log_level)
         
+        # Load environment variables if needed
+        load_dotenv()
+        
         # Initialize Sonarr configuration
-        self.api_key = os.getenv('SONARR_API_KEY')
-        self.base_url = os.getenv('SONARR_URL')
+        self.api_key = api_key or os.getenv('SONARR_API_KEY')
+        self.base_url = base_url or os.getenv('SONARR_URL')
         
         if not self.api_key or not self.base_url:
-            error_msg = "Missing required environment variables: SONARR_API_KEY and/or SONARR_URL"
+            error_msg = "Missing required configuration: API key and/or base URL"
             self.logger.error(error_msg)
             raise ValueError(error_msg)
         
