@@ -6,6 +6,7 @@ from sonarr import Sonarr
 from notion_db import NotionDB
 from api import initialize_api
 from notion_db import NotionPropertyType
+from youtube_api import YouTubeAPI
 
 def main():
     # Load environment variables
@@ -24,7 +25,24 @@ def main():
 
     # Initialize clients
     sonarr = Sonarr(api_key=os.getenv('SONARR_API_KEY'), base_url=os.getenv('SONARR_URL'), log_level=log_level, logger=logger)
-    notion = NotionDB(token=os.getenv('NOTION_TOKEN'), logger=logger)
+    notion = NotionDB(token=os.getenv('NOTION_TOKEN'), logger=logger, log_level=log_level)
+    youtube = YouTubeAPI(api_key=os.getenv('YOUTUBE_API_KEY'), log_level=log_level, logger=logger)
+
+    # Get channel ID from handle
+    try:
+        channel_id = youtube.get_channel_id('@ameasureofpassion')
+        logger.info(f"Found channel ID: {channel_id}")
+    except Exception as e:
+        logger.error(f"Failed to get channel ID: {str(e)}")
+        raise
+    try:
+        channel_stats = youtube.get_channel_stats(channel_id)
+        logger.info(f"Channel stats: {channel_stats}")
+        channel_videos = youtube.get_channel_videos(channel_id)
+        logger.info(f"Channel videos: {channel_videos}")
+    except Exception as e:
+        logger.error(f"Failed to get channel stats: {str(e)}")
+        raise
 
     cs = notion.get_child_databases(page_id='14c84b8f894080458002f0463ce6175b')
     cals = sonarr.get_episodes_calendar(14, 14)
