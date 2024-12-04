@@ -85,10 +85,14 @@ class ScheduledTasks:
             self.logger.error(f"Error updating YouTube stats: {str(e)}")
 
     @staticmethod
-    def initialize_scheduler(notion_client: NotionDB, sonarr_client: Sonarr, youtube_client: YouTubeAPI, logger: logging.Logger) -> AsyncIOScheduler:
+    async def initialize_scheduler(notion_client: NotionDB, sonarr_client: Sonarr, youtube_client: YouTubeAPI, logger: logging.Logger) -> AsyncIOScheduler:
         """Initialize and start the APScheduler"""
         scheduler = AsyncIOScheduler()
         tasks = ScheduledTasks(notion_client, sonarr_client, youtube_client, logger)
+        
+        # Initialize Sonarr cache
+        logger.info("Initializing Sonarr cache...")
+        await sonarr_client.initialize_cache()
         
         # Add job to run at midnight every day
         scheduler.add_job(
@@ -115,6 +119,7 @@ class ScheduledTasks:
         # Run initial updates
         asyncio.create_task(tasks.update_databases())
         asyncio.create_task(tasks.update_youtube_stats())
+        
         return scheduler
 
     @staticmethod
@@ -122,4 +127,4 @@ class ScheduledTasks:
         """Register the startup event handler with FastAPI"""
         @app.on_event("startup")
         async def startup_event():
-            ScheduledTasks.initialize_scheduler(notion_client, sonarr_client, youtube_client, logger)
+            await ScheduledTasks.initialize_scheduler(notion_client, sonarr_client, youtube_client, logger)
