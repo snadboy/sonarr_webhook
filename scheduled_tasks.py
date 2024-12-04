@@ -50,6 +50,33 @@ class ScheduledTasks:
         except Exception as e:
             self.logger.error(f"Error in scheduled database updates: {str(e)}")
 
+    def update_youtube_stats(self):
+        """Update YouTube channel stats - runs hourly"""
+        self.logger.info(f"Running YouTube stats update at {datetime.now()}")
+        try:
+            notion_youtube_children = self.notion.get_child_databases(page_id=os.getenv('NOTION_PAGE_ID_YOUTUBE'))
+            
+            # Get channel stats for A Measure of Passion
+            channel_id = self.youtube.get_channel_id('@ameasureofpassion')
+            channel_stats = self.youtube.get_channel_stats(channel_id)
+            
+            # Update the Channel Stats database
+            self.notion.clear_database(notion_youtube_children[os.getenv('NOTION_DB_YT_CHANNEL')]['id'])
+            properties = {
+                "Name": self.notion.format_property(NotionPropertyType.TITLE, "A Measure of Passion"),
+                "Subscribers": self.notion.format_property(NotionPropertyType.NUMBER, channel_stats.get('subscriberCount', 0)),
+                "Views": self.notion.format_property(NotionPropertyType.NUMBER, channel_stats.get('viewCount', 0)),
+                "Videos": self.notion.format_property(NotionPropertyType.NUMBER, channel_stats.get('videoCount', 0)),
+                "Last Updated": self.notion.format_property(NotionPropertyType.DATE, datetime.now().isoformat()),
+            }
+            self.notion.create_or_update_row(
+                database_id=notion_youtube_children[os.getenv('NOTION_DB_YT_CHANNEL')]['id'],
+                properties=properties
+            )
+            self.logger.info("YouTube stats update completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error updating YouTube stats: {str(e)}")
+
     @staticmethod
     def initialize_scheduler(notion_client: NotionDB, sonarr_client: SonarrAPI, youtube_client: YouTubeAPI, logger: logging.Logger) -> BackgroundScheduler:
         """Initialize and start the APScheduler"""
@@ -65,10 +92,20 @@ class ScheduledTasks:
             replace_existing=True
         )
         
+        # Add job to run hourly for YouTube stats
+        scheduler.add_job(
+            tasks.update_youtube_stats,
+            trigger=CronTrigger(minute=0),  # Run at the start of every hour
+            id='hourly_youtube_update',
+            name='Hourly YouTube stats update',
+            replace_existing=True
+        )
+        
         # Start the scheduler
         scheduler.start()
         logger.info("Scheduler started")
         
-        # Run initial update
+        # Run initial updates
         tasks.update_databases()
+        tasks.update_youtube_stats()
         return scheduler
