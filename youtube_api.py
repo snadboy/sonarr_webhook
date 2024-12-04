@@ -1,14 +1,17 @@
 import logging
+import json
 from typing import Optional, Dict, Any, List
 import os
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+import aiohttp
+from urllib.parse import urlparse, parse_qs
 
 class YouTubeAPIError(Exception):
     """Base exception for YouTube API errors"""
     pass
 
 class YouTubeAPI:
+    BASE_URL = "https://www.googleapis.com/youtube/v3"
+    
     def __init__(self, api_key: Optional[str] = None, log_level: int = logging.INFO, logger: Optional[logging.Logger] = None):
         """
         Initialize YouTube API client
@@ -18,7 +21,6 @@ class YouTubeAPI:
             log_level (int): Logging level (default: logging.INFO)
             logger (Optional[logging.Logger]): Custom logger instance
         """
-        # Setup logging
         if logger:
             self.logger = logger
         else:
@@ -32,17 +34,41 @@ class YouTubeAPI:
         
         self.logger.setLevel(log_level)
         
-        # Initialize YouTube API
         self.api_key = api_key or os.getenv('YOUTUBE_API_KEY')
         if not self.api_key:
             error_msg = "Missing YouTube API key"
             self.logger.error(error_msg)
             raise ValueError(error_msg)
             
-        self.youtube = build('youtube', 'v3', developerKey=self.api_key)
+        self.session = None
         self.logger.info("YouTube API client initialized successfully")
-    
-    def get_video_stats(self, video_id: str) -> Dict[str, Any]:
+
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
+
+    async def _make_request(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Make an HTTP request to the YouTube Data API"""
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+
+        params['key'] = self.api_key
+        url = f"{self.BASE_URL}/{endpoint}"
+
+        try:
+            async with self.session.get(url, params=params) as response:
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientError as e:
+            error_msg = f"YouTube API error: {str(e)}"
+            self.logger.error(error_msg)
+            raise YouTubeAPIError(error_msg) from e
+
+    async def get_video_stats(self, video_id: str) -> Dict[str, Any]:
         """
         Get statistics for a specific video
         
@@ -56,11 +82,10 @@ class YouTubeAPI:
             YouTubeAPIError: If API request fails
         """
         try:
-            request = self.youtube.videos().list(
-                part="statistics,snippet",
-                id=video_id
-            )
-            response = request.execute()
+            response = await self._make_request('videos', {
+                'part': 'statistics,snippet',
+                'id': video_id
+            })
             
             if not response['items']:
                 raise YouTubeAPIError(f"Video not found: {video_id}")
@@ -73,12 +98,12 @@ class YouTubeAPI:
                 'comments': int(video['statistics'].get('commentCount', 0)),
                 'published_at': video['snippet']['publishedAt']
             }
-        except HttpError as e:
-            error_msg = f"YouTube API error: {str(e)}"
+        except Exception as e:
+            error_msg = f"Error getting video stats: {str(e)}"
             self.logger.error(error_msg)
             raise YouTubeAPIError(error_msg) from e
-    
-    def get_channel_stats(self, channel_id: str) -> Dict[str, Any]:
+
+    async def get_channel_stats(self, channel_id: str) -> Dict[str, Any]:
         """
         Get statistics for a YouTube channel
         
@@ -92,11 +117,10 @@ class YouTubeAPI:
             YouTubeAPIError: If API request fails
         """
         try:
-            request = self.youtube.channels().list(
-                part="statistics,snippet",
-                id=channel_id
-            )
-            response = request.execute()
+            response = await self._make_request('channels', {
+                'part': 'statistics,snippet',
+                'id': channel_id
+            })
             
             if not response['items']:
                 raise YouTubeAPIError(f"Channel not found: {channel_id}")
@@ -104,17 +128,16 @@ class YouTubeAPI:
             channel = response['items'][0]
             return {
                 'title': channel['snippet']['title'],
-                'subscribers': int(channel['statistics'].get('subscriberCount', 0)),
-                'videos': int(channel['statistics'].get('videoCount', 0)),
-                'total_views': int(channel['statistics'].get('viewCount', 0)),
-                'created_at': channel['snippet']['publishedAt']
+                'subscriberCount': int(channel['statistics'].get('subscriberCount', 0)),
+                'viewCount': int(channel['statistics'].get('viewCount', 0)),
+                'videoCount': int(channel['statistics'].get('videoCount', 0))
             }
-        except HttpError as e:
-            error_msg = f"YouTube API error: {str(e)}"
+        except Exception as e:
+            error_msg = f"Error getting channel stats: {str(e)}"
             self.logger.error(error_msg)
             raise YouTubeAPIError(error_msg) from e
-    
-    def get_video_comments(self, video_id: str, max_results: int = 100) -> List[Dict[str, Any]]:
+
+    async def get_video_comments(self, video_id: str, max_results: int = 100) -> List[Dict[str, Any]]:
         """
         Get comments for a specific video
         
@@ -129,40 +152,29 @@ class YouTubeAPI:
             YouTubeAPIError: If API request fails
         """
         try:
+            response = await self._make_request('commentThreads', {
+                'part': 'snippet',
+                'videoId': video_id,
+                'maxResults': min(max_results, 100),
+                'order': 'relevance'
+            })
+            
             comments = []
-            request = self.youtube.commentThreads().list(
-                part="snippet",
-                videoId=video_id,
-                maxResults=min(max_results, 100),  # API limit is 100 per request
-                textFormat="plainText"
-            )
-            
-            while request and len(comments) < max_results:
-                response = request.execute()
-                
-                for item in response['items']:
-                    comment = item['snippet']['topLevelComment']['snippet']
-                    comments.append({
-                        'author': comment['authorDisplayName'],
-                        'text': comment['textDisplay'],
-                        'likes': int(comment.get('likeCount', 0)),
-                        'published_at': comment['publishedAt'],
-                        'updated_at': comment['updatedAt']
-                    })
-                
-                # Get the next page of comments
-                request = self.youtube.commentThreads().list_next(request, response)
-                
-                if len(comments) >= max_results:
-                    break
-            
-            return comments[:max_results]
-        except HttpError as e:
-            error_msg = f"YouTube API error: {str(e)}"
+            for item in response.get('items', []):
+                comment = item['snippet']['topLevelComment']['snippet']
+                comments.append({
+                    'author': comment['authorDisplayName'],
+                    'text': comment['textDisplay'],
+                    'likes': int(comment.get('likeCount', 0)),
+                    'published_at': comment['publishedAt']
+                })
+            return comments
+        except Exception as e:
+            error_msg = f"Error getting video comments: {str(e)}"
             self.logger.error(error_msg)
             raise YouTubeAPIError(error_msg) from e
-    
-    def get_channel_videos(self, channel_id: str, max_results: int = 50) -> List[Dict[str, Any]]:
+
+    async def get_channel_videos(self, channel_id: str, max_results: int = 50) -> List[Dict[str, Any]]:
         """
         Get videos from a specific channel
         
@@ -177,61 +189,41 @@ class YouTubeAPI:
             YouTubeAPIError: If API request fails
         """
         try:
-            # First get the channel's upload playlist ID
-            request = self.youtube.channels().list(
-                part="contentDetails",
-                id=channel_id
-            )
-            response = request.execute()
+            # First get the channel's upload playlist
+            response = await self._make_request('channels', {
+                'part': 'contentDetails',
+                'id': channel_id
+            })
             
             if not response['items']:
                 raise YouTubeAPIError(f"Channel not found: {channel_id}")
-            
+                
             uploads_playlist_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
             
-            # Then get the videos from the uploads playlist
+            # Then get the videos from the playlist
+            response = await self._make_request('playlistItems', {
+                'part': 'snippet',
+                'playlistId': uploads_playlist_id,
+                'maxResults': min(max_results, 50)
+            })
+            
             videos = []
-            request = self.youtube.playlistItems().list(
-                part="snippet,contentDetails",
-                playlistId=uploads_playlist_id,
-                maxResults=min(max_results, 50)  # API limit is 50 per request
-            )
-            
-            while request and len(videos) < max_results:
-                response = request.execute()
-                
-                for item in response['items']:
-                    video_id = item['contentDetails']['videoId']
-                    # Get additional stats for each video
-                    stats = self.get_video_stats(video_id)
-                    videos.append({
-                        'id': video_id,
-                        'title': item['snippet']['title'],
-                        'description': item['snippet']['description'],
-                        'published_at': item['snippet']['publishedAt'],
-                        'thumbnails': {
-                            'default': item['snippet']['thumbnails'].get('default', {}).get('url'),
-                            'medium': item['snippet']['thumbnails'].get('medium', {}).get('url'),
-                            'high': item['snippet']['thumbnails'].get('high', {}).get('url'),
-                            'standard': item['snippet']['thumbnails'].get('standard', {}).get('url'),
-                            'maxres': item['snippet']['thumbnails'].get('maxres', {}).get('url'),
-                        },
-                        **stats
-                    })
-                
-                # Get the next page of videos
-                request = self.youtube.playlistItems().list_next(request, response)
-                
-                if len(videos) >= max_results:
-                    break
-            
-            return videos[:max_results]
-        except HttpError as e:
-            error_msg = f"YouTube API error: {str(e)}"
+            for item in response.get('items', []):
+                snippet = item['snippet']
+                videos.append({
+                    'title': snippet['title'],
+                    'description': snippet['description'],
+                    'video_id': snippet['resourceId']['videoId'],
+                    'published_at': snippet['publishedAt'],
+                    'thumbnail_url': snippet['thumbnails']['default']['url']
+                })
+            return videos
+        except Exception as e:
+            error_msg = f"Error getting channel videos: {str(e)}"
             self.logger.error(error_msg)
             raise YouTubeAPIError(error_msg) from e
 
-    def get_channel_id(self, channel_url_or_username: str) -> str:
+    async def get_channel_id(self, channel_url_or_username: str) -> str:
         """
         Get channel ID from a channel URL or username
         
@@ -249,46 +241,32 @@ class YouTubeAPI:
             YouTubeAPIError: If channel not found or API request fails
         """
         try:
-            # If it's already a channel ID, return it
-            if channel_url_or_username.startswith('UC') and len(channel_url_or_username) == 24:
-                return channel_url_or_username
-            
-            # Extract username/handle from URL if needed
-            if '/' in channel_url_or_username:
-                parts = channel_url_or_username.strip('/').split('/')
-                channel_url_or_username = parts[-1]
-                if channel_url_or_username.startswith('@'):
-                    # Remove @ from handle
-                    channel_url_or_username = channel_url_or_username[1:]
-            
-            # Try to find by username first
-            try:
-                request = self.youtube.channels().list(
-                    part="id",
-                    forUsername=channel_url_or_username
-                )
-                response = request.execute()
+            # If it's a URL, parse it
+            if channel_url_or_username.startswith(('http://', 'https://')):
+                parsed_url = urlparse(channel_url_or_username)
+                path_parts = parsed_url.path.strip('/').split('/')
                 
-                if response['items']:
-                    return response['items'][0]['id']
-            except:
-                pass
+                # Direct channel ID
+                if len(path_parts) >= 2 and path_parts[0] == 'channel':
+                    return path_parts[1]
+                
+                # Handle (@username)
+                if len(path_parts) >= 1 and path_parts[0].startswith('@'):
+                    channel_url_or_username = path_parts[0]
             
-            # If username search fails, try search
-            request = self.youtube.search().list(
-                part="id",
-                q=channel_url_or_username,
-                type="channel",
-                maxResults=1
-            )
-            response = request.execute()
+            # Search for the channel
+            response = await self._make_request('search', {
+                'part': 'snippet',
+                'q': channel_url_or_username,
+                'type': 'channel',
+                'maxResults': 1
+            })
             
             if not response['items']:
                 raise YouTubeAPIError(f"Channel not found: {channel_url_or_username}")
                 
-            return response['items'][0]['id']['channelId']
-            
-        except HttpError as e:
-            error_msg = f"YouTube API error: {str(e)}"
+            return response['items'][0]['snippet']['channelId']
+        except Exception as e:
+            error_msg = f"Error getting channel ID: {str(e)}"
             self.logger.error(error_msg)
             raise YouTubeAPIError(error_msg) from e

@@ -46,23 +46,17 @@ logging.getLogger('httpx').setLevel(logging.INFO)
 logging.getLogger('httpcore').setLevel(logging.INFO)
 logging.getLogger('apscheduler').setLevel(logging.INFO)
 
-def main():
-    # Initialize clients
-    sonarr = Sonarr(api_key=os.getenv('SONARR_API_KEY'), base_url=os.getenv('SONARR_URL'), log_level=logging.DEBUG, logger=logger)
-    notion = NotionDB(token=os.getenv('NOTION_TOKEN'), logger=logger, log_level=logging.DEBUG)
-    youtube = YouTubeAPI(api_key=os.getenv('YOUTUBE_API_KEY'), log_level=logging.DEBUG, logger=logger)
+# Initialize clients
+sonarr = Sonarr(api_key=os.getenv('SONARR_API_KEY'), base_url=os.getenv('SONARR_URL'), log_level=logging.DEBUG, logger=logger)
+notion = NotionDB(token=os.getenv('NOTION_TOKEN'), logger=logger, log_level=logging.DEBUG)
+youtube = YouTubeAPI(api_key=os.getenv('YOUTUBE_API_KEY'), log_level=logging.DEBUG, logger=logger)
 
-    # Initialize FastAPI app
-    app = initialize_api(sonarr)
-    
-    # Initialize scheduler when app starts
-    @app.on_event("startup")
-    async def startup_event():
-        ScheduledTasks.initialize_scheduler(notion, sonarr, youtube, logger)
-    
-    return app
+# Initialize FastAPI app
+app = initialize_api(sonarr)
+
+# Register startup handler
+ScheduledTasks.register_startup_handler(app, notion, sonarr, youtube, logger)
 
 if __name__ == "__main__":
     import uvicorn
-    app = main()
     uvicorn.run(app, host="0.0.0.0", port=8000)
