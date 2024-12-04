@@ -4,12 +4,12 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from notion_db import NotionDB, NotionPropertyType
-from sonarr import SonarrAPI
+from sonarr import Sonarr
 from youtube_api import YouTubeAPI
 
 
 class ScheduledTasks:
-    def __init__(self, notion_client: NotionDB, sonarr_client: SonarrAPI, youtube_client: YouTubeAPI, logger: logging.Logger):
+    def __init__(self, notion_client: NotionDB, sonarr_client: Sonarr, youtube_client: YouTubeAPI, logger: logging.Logger):
         self.notion = notion_client
         self.sonarr = sonarr_client
         self.youtube = youtube_client
@@ -78,7 +78,7 @@ class ScheduledTasks:
             self.logger.error(f"Error updating YouTube stats: {str(e)}")
 
     @staticmethod
-    def initialize_scheduler(notion_client: NotionDB, sonarr_client: SonarrAPI, youtube_client: YouTubeAPI, logger: logging.Logger) -> BackgroundScheduler:
+    def initialize_scheduler(notion_client: NotionDB, sonarr_client: Sonarr, youtube_client: YouTubeAPI, logger: logging.Logger) -> BackgroundScheduler:
         """Initialize and start the APScheduler"""
         scheduler = BackgroundScheduler()
         tasks = ScheduledTasks(notion_client, sonarr_client, youtube_client, logger)

@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException, Depends
 from api import initialize_api
 from notion_db import NotionDB, NotionPropertyType
-from sonarr import SonarrAPI
+from sonarr import Sonarr
 from youtube_api import YouTubeAPI
 from scheduled_tasks import ScheduledTasks
 
@@ -48,7 +48,7 @@ logging.getLogger('apscheduler').setLevel(logging.INFO)
 
 def main():
     # Initialize clients
-    sonarr = SonarrAPI(api_key=os.getenv('SONARR_API_KEY'), base_url=os.getenv('SONARR_URL'), log_level=logging.DEBUG, logger=logger)
+    sonarr = Sonarr(api_key=os.getenv('SONARR_API_KEY'), base_url=os.getenv('SONARR_URL'), log_level=logging.DEBUG, logger=logger)
     notion = NotionDB(token=os.getenv('NOTION_TOKEN'), logger=logger, log_level=logging.DEBUG)
     youtube = YouTubeAPI(api_key=os.getenv('YOUTUBE_API_KEY'), log_level=logging.DEBUG, logger=logger)
 
