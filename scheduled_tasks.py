@@ -28,8 +28,7 @@ class ScheduledTasks:
             calendar_db_id = notion_telly_children[os.getenv('NOTION_DB_TV_CALENDAR')]['id']
             
             # Get calendar episodes
-            cals = self.sonarr.get_episodes_calendar(past_days, future_days)
-            series_cache = {}  # Cache for series data
+            cals = await self.sonarr.get_episodes_calendar(past_days, future_days)
 
             # Delete old entries
             filter_params = {
@@ -42,12 +41,12 @@ class ScheduledTasks:
             
             # Add new entries
             for cal in cals:
-                # Get series info from cache or API
                 series_id = cal['seriesId']
-                if series_id not in series_cache:
-                    series_cache[series_id] = self.sonarr.get_series_by_id(series_id)
-                
-                series = series_cache[series_id]
+                series = await self.sonarr.get_series_by_id(series_id)
+                if not series:
+                    self.logger.warning(f"Could not find series {series_id} for calendar entry")
+                    continue
+                    
                 show_title = series.get('title', 'Unknown Show')
                 season_number = cal.get('seasonNumber', 0)
                 episode_number = cal.get('episodeNumber', 0)
