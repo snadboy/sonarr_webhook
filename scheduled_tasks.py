@@ -45,8 +45,13 @@ class ScheduledTasks:
             
             # Add new entries
             for cal in cals:
-                # No need to query Sonarr again, we already have the episode info
-                show_title = cal.get('series', {}).get('title', 'Unknown Show')
+                series_id = cal.get('seriesId', 0)
+                show = self.sonarr.cache.get_show(series_id)
+                if not show:
+                    self.logger.warning(f"Could not find series {series_id} in cache for calendar entry")
+                    continue
+
+                show_title = show.get('title', 'Unknown Show')
                 season_number = cal.get('seasonNumber', 0)
                 episode_number = cal.get('episodeNumber', 0)
                 episode_title = cal.get('title', 'Unknown Episode')
@@ -54,10 +59,11 @@ class ScheduledTasks:
                 air_date = cal.get('airDate', '2024-12-03')
 
                 properties = {
-                    "Show Title": self.notion.format_property(NotionPropertyType.RICH_TEXT, f"{show_title} - S{season_number}E{episode_number}: {episode_title}"),
+                    "Show Title": self.notion.format_property(NotionPropertyType.RICH_TEXT, f"S{season_number}E{episode_number}: {episode_title}"),
                     "Name": self.notion.format_property(NotionPropertyType.TITLE, show_title),
                     "Date": self.notion.format_property(NotionPropertyType.DATE, air_date),
-                    "Episode ID": self.notion.format_property(NotionPropertyType.NUMBER, episode_id)
+                    "Episode ID": self.notion.format_property(NotionPropertyType.NUMBER, episode_id),
+                    "Poster": self.notion.format_property(NotionPropertyType.URL, show.get('images', [{'remoteUrl': ''}])[0].get('remoteUrl', ''))
                 }
 
                 # Filter by Episode ID and Date to find existing entry
