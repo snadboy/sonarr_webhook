@@ -4,28 +4,78 @@ import asyncio
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from notion_db import NotionDB, NotionPropertyType
+from notion_db import NotionDB, NotionPropertyType, NotionDBError
 from sonarr import Sonarr
 from youtube_api import YouTubeAPI
 from fastapi import FastAPI
+from typing import Dict, Any
 
 
 class ScheduledTasks:
     def __init__(self, notion_client: NotionDB, sonarr_client: Sonarr, youtube_client: YouTubeAPI, logger: logging.Logger):
         self.notion = notion_client
+        self._notion_telly = None
+        self._notion_youtube = None
         self.sonarr = sonarr_client
         self.youtube = youtube_client
         self.logger = logger
 
+    async def get_notion_page_info(self, page_name: str) -> Dict[str, Any]:
+        """Get Notion page info including its databases.
+        
+        Args:
+            page_name (str): Name of the page as configured in environment variables
+            
+        Returns:
+            Dict containing page info with 'name', 'page_id', and 'database_ids'
+            
+        Raises:
+            NotionDBError: If page cannot be found
+        """
+        page_info = {"name": page_name}
+        pages = await self.notion.get_pages()
+        page_data = pages.get(page_name)
+        if not page_data:
+            raise NotionDBError(f"Could not find page {page_name}")
+        page_info["page_id"] = page_data['id']
+        page_info["database_ids"] = await self.notion.get_child_databases(page_id=page_info["page_id"])
+        return page_info
+
+    @property
+    async def notion_telly(self) -> Dict[str, Any]:
+        """Cached access to Telly page info.
+        
+        Returns:
+            Dict containing page info with 'name', 'page_id', and 'database_ids'
+        """
+        if self._notion_telly is None:
+            self._notion_telly = await self.get_notion_page_info(os.getenv('NOTION_PAGE_TELLY'))
+        return self._notion_telly
+
+    @property
+    async def notion_youtube(self) -> Dict[str, Any]:
+        """Cached access to YouTube page info.
+        
+        Returns:
+            Dict containing page info with 'name', 'page_id', and 'database_ids'
+        """
+        if self._notion_youtube is None:
+            self._notion_youtube = await self.get_notion_page_info(os.getenv('NOTION_PAGE_YOUTUBE'))
+        return self._notion_youtube
+
     async def update_databases(self):
         """Update all databases - runs at startup and midnight"""
+
         self.logger.info(f"Running scheduled database updates at {datetime.now()}")
+
         try:
             # Get configuration from environment
             past_days = int(os.getenv('SONARR_PAST_DAYS', '7'))
             future_days = int(os.getenv('SONARR_FUTURE_DAYS', '14'))
-            notion_telly_children = await self.notion.get_child_databases(page_id=os.getenv('NOTION_PAGE_ID_TELLY'))
-            calendar_db_id = notion_telly_children[os.getenv('NOTION_DB_TV_CALENDAR')]['id']
+
+            # Get database IDs
+            telly = await self.notion_telly
+            calendar_db_id = telly["database_ids"][os.getenv('NOTION_DB_TV_CALENDAR')]['id']
             
             # Get calendar episodes
             cals = await self.sonarr.get_episodes_calendar(past_days, future_days)

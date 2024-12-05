@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 from enum import Enum
 import aiohttp
 from typing import Dict, List, Optional, Any, Union
@@ -54,14 +55,14 @@ class NotionDB:
         if self.session:
             await self.session.close()
 
-    async def _make_request(self, method: str, endpoint: str, data: Optional[dict] = None) -> dict:
+    async def _make_request(self, method: str, endpoint: str, data: Optional[dict] = None, params: Optional[dict] = None) -> dict:
         """Make an HTTP request to the Notion API"""
         if not self.session:
             self.session = aiohttp.ClientSession(headers=self.headers)
 
         url = f"{self.base_url}/{endpoint}"
         try:
-            async with self.session.request(method, url, json=data) as response:
+            async with self.session.request(method, url, json=data, params=params) as response:
                 response.raise_for_status()
                 return await response.json()
         except aiohttp.ClientError as e:
@@ -186,38 +187,137 @@ class NotionDB:
             self.logger.error(f"Error deleting pages with filter: {str(e)}")
             raise NotionDBError(f"Error deleting pages with filter: {str(e)}") from e
 
+    async def get_pages(self, include_children: bool = False) -> Dict[str, Dict]:
+        """Get pages accessible to the current connection.
+        
+        Args:
+            include_children (bool): If True, includes child pages in a 'children' field
+        
+        Returns:
+            Dict[str, Dict]: Dictionary of pages with title as key and page details as value
+        """
+        try:
+            response = await self._make_request(
+                "POST", 
+                "search", 
+                {
+                    "filter": {
+                        "property": "object",
+                        "value": "page"
+                    },
+                    "filter_properties": ["parent"]
+                }
+            )
+            pages = {}
+            for page in response.get('results', []):
+                # Only include pages that are workspace pages or database pages
+                parent = page.get('parent', {})
+                parent_type = parent.get('type')
+                if parent_type not in ('workspace', 'database'):
+                    continue
+                    
+                title = self._extract_page_title(page)
+                if not title:
+                    continue
+                    
+                page_info = {
+                    'id': page['id'],
+                    'url': page['url'],
+                    'created_time': page['created_time'],
+                    'last_edited_time': page['last_edited_time'],
+                    'parent': page.get('parent', {}),
+                    'archived': page.get('archived', False),
+                    'icon': page.get('icon', {}),
+                    'cover': page.get('cover', {}),
+                    'properties': page.get('properties', {}),
+                }
+                
+                if include_children:
+                    children = await self._get_child_pages(page['id'])
+                    if children:
+                        page_info['children'] = children
+                
+                # Log full page object for inspection
+                self.logger.debug(f"Full page object for {title}: {json.dumps(page, indent=2)}")
+                
+                pages[title] = page_info
+            return pages
+        except Exception as e:
+            self.logger.error(f"Error getting pages: {str(e)}")
+            return {}
+            
+    async def _get_child_pages(self, page_id: str) -> Dict[str, Dict]:
+        """Get child pages for a given page ID.
+        
+        Args:
+            page_id (str): The parent page ID
+            
+        Returns:
+            Dict[str, Dict]: Dictionary of child pages
+        """
+        try:
+            response = await self._make_request(
+                "GET", 
+                f"blocks/{page_id}/children",
+                params={"page_size": 100}
+            )
+            
+            children = {}
+            for block in response.get('results', []):
+                if block['type'] == 'child_page':
+                    title = block.get('child_page', {}).get('title', '')
+                    if title:
+                        children[title] = {
+                            'id': block['id'],
+                            'created_time': block['created_time'],
+                            'last_edited_time': block['last_edited_time']
+                        }
+            return children
+        except Exception as e:
+            self.logger.error(f"Error getting child pages: {str(e)}")
+            return {}
+
+    def _extract_page_title(self, page: Dict) -> Optional[str]:
+        """Extract the title from a page object.
+        
+        Args:
+            page (Dict): The page object from Notion API
+            
+        Returns:
+            Optional[str]: The page title or None if not found
+        """
+        properties = page.get('properties', {})
+        # Try to find title in properties
+        for prop in properties.values():
+            if prop['type'] == 'title':
+                title_items = prop.get('title', [])
+                if title_items:
+                    return title_items[0].get('plain_text', '')
+        
+        # Fallback to icon and emoji if no title found
+        icon = page.get('icon', {})
+        if icon and icon.get('type') == 'emoji':
+            return icon.get('emoji', '')
+            
+        return None
+
     async def update_youtube_channel_stats(self, stats: Dict[str, Any]) -> None:
         """Update YouTube channel stats in Notion database"""
         try:
-            page_id = os.getenv('NOTION_PAGE_ID_YOUTUBE')
+            youtube = await self.notion_youtube
             db_name = os.getenv('NOTION_DB_YT_CHANNEL')
             
-            self.logger.debug(f"Updating YouTube stats with page_id={page_id} and db_name={db_name}")
+            self.logger.debug(f"Updating YouTube stats with page_id={youtube['page_id']} and db_name={db_name}")
             
-            if not page_id:
-                raise NotionDBError("NOTION_PAGE_ID_YOUTUBE environment variable is not set")
             if not db_name:
                 raise NotionDBError("NOTION_DB_YT_CHANNEL environment variable is not set")
             
-            # Try to get database directly first
-            try:
-                database = await self.get_database(page_id)
-                database_id = page_id  # If successful, use this ID directly
-                self.logger.debug("Successfully accessed database directly")
-            except Exception as e:
-                self.logger.debug(f"Could not access as database directly: {str(e)}")
-                # If that fails, try as a page with child databases
-                notion_youtube_children = await self.get_child_databases(page_id=page_id)
-                if not notion_youtube_children:
-                    raise NotionDBError(f"No child databases found in page {page_id}")
-                    
-                if db_name not in notion_youtube_children:
-                    raise NotionDBError(f"Database '{db_name}' not found in page {page_id}. Available databases: {list(notion_youtube_children.keys())}")
-                    
-                database_id = notion_youtube_children[db_name]['id']
+            # Get child databases
+            child_dbs = await self.get_child_databases(page_id=youtube['page_id'])
+            db_id = child_dbs[db_name]['id']
             
             # Clear existing entries
-            await self.clear_database(database_id)
+            await self.clear_database(db_id)
             
             # Format properties
             properties = {
@@ -229,7 +329,7 @@ class NotionDB:
             }
             
             # Create new entry
-            await self.create_or_update_row(database_id=database_id, properties=properties)
+            await self.create_or_update_row(database_id=db_id, properties=properties)
             self.logger.info("Updated YouTube channel stats in Notion")
         except Exception as e:
             self.logger.error(f"Error updating YouTube channel stats: {str(e)}")
