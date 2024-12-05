@@ -45,26 +45,44 @@ class ScheduledTasks:
             
             # Add new entries
             for cal in cals:
-                series_id = cal['seriesId']
-                series = await self.sonarr.get_series_by_id(series_id)
-                if not series:
-                    self.logger.warning(f"Could not find series {series_id} for calendar entry")
-                    continue
-                    
-                show_title = series.get('title', 'Unknown Show')
+                # No need to query Sonarr again, we already have the episode info
+                show_title = cal.get('series', {}).get('title', 'Unknown Show')
                 season_number = cal.get('seasonNumber', 0)
                 episode_number = cal.get('episodeNumber', 0)
                 episode_title = cal.get('title', 'Unknown Episode')
+                episode_id = cal.get('id', 0)
+                air_date = cal.get('airDate', '2024-12-03')
 
                 properties = {
                     "Show Title": self.notion.format_property(NotionPropertyType.RICH_TEXT, f"{show_title} - S{season_number}E{episode_number}: {episode_title}"),
                     "Name": self.notion.format_property(NotionPropertyType.TITLE, show_title),
-                    "Date": self.notion.format_property(NotionPropertyType.DATE, cal.get('airDate', '2024-12-03')),
+                    "Date": self.notion.format_property(NotionPropertyType.DATE, air_date),
+                    "Episode ID": self.notion.format_property(NotionPropertyType.NUMBER, episode_id)
                 }
-                self.logger.info(f"Creating/Updating calendar entry for {properties.get('Show Title', 'Unknown Show')} - {properties.get('Date', 'Unknown Date')}")
+
+                # Filter by Episode ID and Date to find existing entry
+                filter_params = {
+                    "and": [
+                        {
+                            "property": "Episode ID",
+                            "number": {
+                                "equals": episode_id
+                            }
+                        },
+                        {
+                            "property": "Date",
+                            "date": {
+                                "equals": air_date
+                            }
+                        }
+                    ]
+                }
+
+                self.logger.info(f"Creating/Updating calendar entry for {show_title} - S{season_number}E{episode_number} on {air_date}")
                 await self.notion.create_or_update_row(
                     database_id=calendar_db['id'],
-                    properties=properties
+                    properties=properties,
+                    filter_params=filter_params
                 )
             self.logger.info("Database updates completed successfully")
         except Exception as e:
@@ -97,7 +115,7 @@ class ScheduledTasks:
             youtube_db = await self.notion.notion_db_yt_channel
             
             # Get existing channels from database
-            existing_channels = await self.notion.get_database_rows(youtube_db['id'])
+            existing_channels = await self.notion.query_database(youtube_db['id'])
             
             # Update each channel
             for channel in existing_channels:

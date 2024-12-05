@@ -3,9 +3,11 @@ import os
 import json
 from enum import Enum
 import aiohttp
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 from datetime import datetime
-
+import asyncio
+from asyncio import Lock, Semaphore
+import time
 
 class NotionPropertyType(Enum):
     TITLE = "title"
@@ -48,7 +50,13 @@ class NotionDB:
         self.session = None
         self._page_cache = {}  # Cache for page info
         self._db_cache = {}  # Cache for database info
-
+        
+        # Rate limiting
+        self.request_semaphore = Semaphore(3)  # Max 3 concurrent requests
+        self.last_request_time = 0
+        self.min_request_interval = 0.34  # ~3 requests per second
+        self.request_lock = Lock()
+        
     async def __aenter__(self):
         self.session = aiohttp.ClientSession(headers=self.headers)
         return self
@@ -57,19 +65,52 @@ class NotionDB:
         if self.session:
             await self.session.close()
 
+    async def _wait_for_rate_limit(self):
+        """Wait if needed to respect rate limits"""
+        async with self.request_lock:
+            current_time = time.time()
+            time_since_last = current_time - self.last_request_time
+            if time_since_last < self.min_request_interval:
+                await asyncio.sleep(self.min_request_interval - time_since_last)
+            self.last_request_time = time.time()
+
     async def _make_request(self, method: str, endpoint: str, data: Optional[dict] = None, params: Optional[dict] = None) -> dict:
-        """Make an HTTP request to the Notion API"""
+        """Make an HTTP request to the Notion API with rate limiting and retries"""
         if not self.session:
             self.session = aiohttp.ClientSession(headers=self.headers)
 
         url = f"{self.base_url}/{endpoint}"
-        try:
-            async with self.session.request(method, url, json=data, params=params) as response:
-                response.raise_for_status()
-                return await response.json()
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Error making request to Notion API: {str(e)}")
-            raise NotionDBError(f"Error making request to Notion API: {str(e)}") from e
+        max_retries = 3
+        base_delay = 1  # Start with 1 second delay
+        
+        async with self.request_semaphore:  # Limit concurrent requests
+            for attempt in range(max_retries):
+                try:
+                    await self._wait_for_rate_limit()
+                    async with self.session.request(method, url, json=data, params=params) as response:
+                        if response.status == 429:  # Too Many Requests
+                            retry_after = int(response.headers.get('Retry-After', base_delay * (2 ** attempt)))
+                            self.logger.warning(f"Rate limited. Waiting {retry_after} seconds before retry.")
+                            await asyncio.sleep(retry_after)
+                            continue
+                            
+                        if response.status == 400:  # Bad Request
+                            error_body = await response.json()
+                            error_msg = error_body.get('message', 'Unknown error')
+                            self.logger.error(f"Bad request: {error_msg}")
+                            raise NotionDBError(f"Bad request: {error_msg}")
+                            
+                        response.raise_for_status()
+                        return await response.json()
+                        
+                except aiohttp.ClientError as e:
+                    if attempt == max_retries - 1:  # Last attempt
+                        self.logger.error(f"Error making request to Notion API: {str(e)}")
+                        raise NotionDBError(f"Error making request to Notion API: {str(e)}") from e
+                    
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    self.logger.warning(f"Request failed. Retrying in {delay} seconds...")
+                    await asyncio.sleep(delay)
 
     async def get_database(self, database_id: str) -> dict:
         """Get a database by ID"""
@@ -478,3 +519,42 @@ class NotionDB:
         # Cache the result
         self._db_cache[cache_key] = db_info
         return db_info
+
+    async def batch_update_pages(self, updates: List[Tuple[str, dict]]) -> List[dict]:
+        """Batch update multiple pages with rate limiting
+        
+        Args:
+            updates: List of (page_id, properties) tuples
+            
+        Returns:
+            List of updated page objects
+        """
+        results = []
+        for page_id, properties in updates:
+            try:
+                result = await self.update_page(page_id, properties)
+                results.append(result)
+            except Exception as e:
+                self.logger.error(f"Error updating page {page_id}: {str(e)}")
+                results.append({"id": page_id, "error": str(e)})
+        return results
+
+    async def batch_create_pages(self, database_id: str, pages: List[dict]) -> List[dict]:
+        """Batch create multiple pages with rate limiting
+        
+        Args:
+            database_id: ID of the database to create pages in
+            pages: List of page property dictionaries
+            
+        Returns:
+            List of created page objects
+        """
+        results = []
+        for properties in pages:
+            try:
+                result = await self.create_page(database_id, properties)
+                results.append(result)
+            except Exception as e:
+                self.logger.error(f"Error creating page: {str(e)}")
+                results.append({"error": str(e)})
+        return results
