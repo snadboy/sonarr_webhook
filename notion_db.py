@@ -299,6 +299,20 @@ class NotionDB:
             return {"checkbox": bool(value)}
         elif prop_type == NotionPropertyType.URL:
             return {"url": str(value)}
+        elif prop_type == NotionPropertyType.FILES:
+            if isinstance(value, dict) and 'url' in value:
+                # If just given a URL, format it as an external file
+                return {"files": [{
+                    "type": "external",
+                    "name": value.get('name', 'External File'),
+                    "external": {
+                        "url": value['url']
+                    }
+                }]}
+            # Otherwise assume it's already in the correct format
+            if not isinstance(value, list):
+                value = [value]
+            return {"files": value}
         else:
             raise ValueError(f"Unsupported property type: {prop_type}")
 

@@ -58,12 +58,18 @@ class ScheduledTasks:
                 episode_id = cal.get('id', 0)
                 air_date = cal.get('airDate', '2024-12-03')
 
+                # Get poster URL from show images
+                poster_url = show.get('images', [{'remoteUrl': ''}])[0].get('remoteUrl', '')
+                
                 properties = {
                     "Show Title": self.notion.format_property(NotionPropertyType.RICH_TEXT, f"S{season_number}E{episode_number}: {episode_title}"),
                     "Name": self.notion.format_property(NotionPropertyType.TITLE, show_title),
                     "Date": self.notion.format_property(NotionPropertyType.DATE, air_date),
                     "Episode ID": self.notion.format_property(NotionPropertyType.NUMBER, episode_id),
-                    "Poster": self.notion.format_property(NotionPropertyType.URL, show.get('images', [{'remoteUrl': ''}])[0].get('remoteUrl', ''))
+                    "Poster": self.notion.format_property(NotionPropertyType.FILES, {
+                        "url": poster_url,
+                        "name": f"{show_title} Poster"
+                    })
                 }
 
                 # Filter by Episode ID and Date to find existing entry
