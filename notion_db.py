@@ -335,21 +335,17 @@ class NotionDB:
             results = response.get('results', [])
             if not results:
                 raise NotionDBError(f"Could not find page with name: {page_name}")
-                
-            # Find exact match (case-insensitive)
-            for page in results:
-                title = self._extract_page_title(page)
-                if title and title.lower() == page_name.lower():
-                    return {
-                        'id': page['id'],
-                        'title': title,
-                        'url': page['url'],
-                        'parent': page.get('parent', {}),
-                        'created_time': page['created_time'],
-                        'last_edited_time': page['last_edited_time']
-                    }
             
-            raise NotionDBError(f"Could not find exact match for page: {page_name}")
+            # Return first result since we already filtered by name in search
+            page = results[0]
+            return {
+                'id': page['id'],
+                'title': self._extract_page_title(page),
+                'url': page['url'],
+                'parent': page.get('parent', {}),
+                'created_time': page['created_time'],
+                'last_edited_time': page['last_edited_time']
+            }
             
         except Exception as e:
             self.logger.error(f"Error finding page {page_name}: {str(e)}")
@@ -385,21 +381,19 @@ class NotionDB:
             results = response.get('results', [])
             if not results:
                 raise NotionDBError(f"Could not find database with name: {database_name}")
-                
-            # Find exact match (case-insensitive) with optional parent check
-            for db in results:
-                title = self._extract_page_title(db)
-                if title and title.lower() == database_name.lower():
-                    # If parent_id is specified, check if this database belongs to that parent
-                    if parent_id:
-                        db_parent = db.get('parent', {})
-                        if db_parent.get('type') == 'page_id' and db_parent.get('page_id') == parent_id:
-                            return self._format_database_info(db)
-                    else:
-                        return self._format_database_info(db)
             
-            parent_msg = f" in parent page {parent_id}" if parent_id else ""
-            raise NotionDBError(f"Could not find exact match for database: {database_name}{parent_msg}")
+            # Return first result since we already filtered by name in search
+            # If parent_id is specified, find the first database with matching parent
+            for db in results:
+                if parent_id:
+                    db_parent = db.get('parent', {})
+                    if db_parent.get('type') == 'page_id' and db_parent.get('page_id') == parent_id:
+                        return self._format_database_info(db)
+                else:
+                    return self._format_database_info(db)
+            
+            if parent_id:
+                raise NotionDBError(f"Could not find database with name: {database_name} under parent: {parent_id}")
             
         except Exception as e:
             self.logger.error(f"Error finding database {database_name}: {str(e)}")
