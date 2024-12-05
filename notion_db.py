@@ -187,119 +187,29 @@ class NotionDB:
             self.logger.error(f"Error deleting pages with filter: {str(e)}")
             raise NotionDBError(f"Error deleting pages with filter: {str(e)}") from e
 
-    async def get_pages(self, include_children: bool = False) -> Dict[str, Dict]:
-        """Get pages accessible to the current connection.
-        
-        Args:
-            include_children (bool): If True, includes child pages in a 'children' field
-        
-        Returns:
-            Dict[str, Dict]: Dictionary of pages with title as key and page details as value
-        """
-        try:
-            response = await self._make_request(
-                "POST", 
-                "search", 
-                {
-                    "filter": {
-                        "property": "object",
-                        "value": "page"
-                    },
-                    "filter_properties": ["parent"]
-                }
-            )
-            pages = {}
-            for page in response.get('results', []):
-                # Only include pages that are workspace pages or database pages
-                parent = page.get('parent', {})
-                parent_type = parent.get('type')
-                if parent_type not in ('workspace', 'database'):
-                    continue
-                    
-                title = self._extract_page_title(page)
-                if not title:
-                    continue
-                    
-                page_info = {
-                    'id': page['id'],
-                    'url': page['url'],
-                    'created_time': page['created_time'],
-                    'last_edited_time': page['last_edited_time'],
-                    'parent': page.get('parent', {}),
-                    'archived': page.get('archived', False),
-                    'icon': page.get('icon', {}),
-                    'cover': page.get('cover', {}),
-                    'properties': page.get('properties', {}),
-                }
-                
-                if include_children:
-                    children = await self._get_child_pages(page['id'])
-                    if children:
-                        page_info['children'] = children
-                
-                # Log full page object for inspection
-                self.logger.debug(f"Full page object for {title}: {json.dumps(page, indent=2)}")
-                
-                pages[title] = page_info
-            return pages
-        except Exception as e:
-            self.logger.error(f"Error getting pages: {str(e)}")
-            return {}
-            
-    async def _get_child_pages(self, page_id: str) -> Dict[str, Dict]:
-        """Get child pages for a given page ID.
-        
-        Args:
-            page_id (str): The parent page ID
-            
-        Returns:
-            Dict[str, Dict]: Dictionary of child pages
-        """
-        try:
-            response = await self._make_request(
-                "GET", 
-                f"blocks/{page_id}/children",
-                params={"page_size": 100}
-            )
-            
-            children = {}
-            for block in response.get('results', []):
-                if block['type'] == 'child_page':
-                    title = block.get('child_page', {}).get('title', '')
-                    if title:
-                        children[title] = {
-                            'id': block['id'],
-                            'created_time': block['created_time'],
-                            'last_edited_time': block['last_edited_time']
-                        }
-            return children
-        except Exception as e:
-            self.logger.error(f"Error getting child pages: {str(e)}")
-            return {}
-
-    def _extract_page_title(self, page: Dict) -> Optional[str]:
-        """Extract the title from a page object.
-        
-        Args:
-            page (Dict): The page object from Notion API
-            
-        Returns:
-            Optional[str]: The page title or None if not found
-        """
+    def _extract_page_title(self, page: dict) -> Optional[str]:
+        """Extract title from page object"""
         properties = page.get('properties', {})
-        # Try to find title in properties
-        for prop in properties.values():
-            if prop['type'] == 'title':
-                title_items = prop.get('title', [])
-                if title_items:
-                    return title_items[0].get('plain_text', '')
+        title_prop = None
         
-        # Fallback to icon and emoji if no title found
-        icon = page.get('icon', {})
-        if icon and icon.get('type') == 'emoji':
-            return icon.get('emoji', '')
+        # First try to find a property of type "title"
+        for prop in properties.values():
+            if prop.get('type') == 'title':
+                title_prop = prop
+                break
+                
+        # If no title property found, try to get it from child_page title
+        if not title_prop and page.get('type') == 'child_page':
+            return page.get('child_page', {}).get('title', '')
             
-        return None
+        if not title_prop:
+            return None
+            
+        title_content = title_prop.get('title', [])
+        if not title_content:
+            return None
+            
+        return title_content[0].get('plain_text', '')
 
     async def update_youtube_channel_stats(self, stats: Dict[str, Any]) -> None:
         """Update YouTube channel stats in Notion database"""
@@ -312,24 +222,23 @@ class NotionDB:
             if not db_name:
                 raise NotionDBError("NOTION_DB_YT_CHANNEL environment variable is not set")
             
-            # Get child databases
-            child_dbs = await self.get_child_databases(page_id=youtube['page_id'])
-            db_id = child_dbs[db_name]['id']
+            # Find the database
+            db = await self.find_database(db_name, parent_id=youtube['page_id'])
             
             # Clear existing entries
-            await self.clear_database(db_id)
+            await self.clear_database(db['id'])
             
             # Format properties
             properties = {
-                "Name": self.format_property(NotionPropertyType.TITLE, "A Measure of Passion"),
+                "Title": self.format_property(NotionPropertyType.TITLE, "Channel Stats"),
                 "Subscribers": self.format_property(NotionPropertyType.NUMBER, stats.get('subscriberCount', 0)),
-                "Views": self.format_property(NotionPropertyType.NUMBER, stats.get('viewCount', 0)),
                 "Videos": self.format_property(NotionPropertyType.NUMBER, stats.get('videoCount', 0)),
-                "Last Updated": self.format_property(NotionPropertyType.DATE, datetime.now().isoformat()),
+                "Views": self.format_property(NotionPropertyType.NUMBER, stats.get('viewCount', 0)),
+                "Last Updated": self.format_property(NotionPropertyType.DATE, datetime.now().isoformat())
             }
             
             # Create new entry
-            await self.create_or_update_row(database_id=db_id, properties=properties)
+            await self.create_or_update_row(database_id=db['id'], properties=properties)
             self.logger.info("Updated YouTube channel stats in Notion")
         except Exception as e:
             self.logger.error(f"Error updating YouTube channel stats: {str(e)}")
@@ -356,3 +265,124 @@ class NotionDB:
             return {"url": str(value)}
         else:
             raise ValueError(f"Unsupported property type: {prop_type}")
+
+    async def find_page(self, page_name: str) -> Dict[str, Any]:
+        """Find a specific page by name using Notion's search.
+        
+        Args:
+            page_name (str): Name of the page to find
+            
+        Returns:
+            Dict containing page info with id, title, and other metadata
+            
+        Raises:
+            NotionDBError: If page cannot be found
+        """
+        try:
+            response = await self._make_request(
+                "POST", 
+                "search", 
+                {
+                    "query": page_name,
+                    "filter": {
+                        "value": "page",
+                        "property": "object"
+                    },
+                    "sort": {
+                        "direction": "ascending",
+                        "timestamp": "last_edited_time"
+                    }
+                }
+            )
+            
+            results = response.get('results', [])
+            if not results:
+                raise NotionDBError(f"Could not find page with name: {page_name}")
+                
+            # Find exact match (case-insensitive)
+            for page in results:
+                title = self._extract_page_title(page)
+                if title and title.lower() == page_name.lower():
+                    return {
+                        'id': page['id'],
+                        'title': title,
+                        'url': page['url'],
+                        'parent': page.get('parent', {}),
+                        'created_time': page['created_time'],
+                        'last_edited_time': page['last_edited_time']
+                    }
+            
+            raise NotionDBError(f"Could not find exact match for page: {page_name}")
+            
+        except Exception as e:
+            self.logger.error(f"Error finding page {page_name}: {str(e)}")
+            raise NotionDBError(f"Error finding page {page_name}: {str(e)}") from e
+
+    async def find_database(self, database_name: str, parent_id: Optional[str] = None) -> Dict[str, Any]:
+        """Find a specific database by name using Notion's search.
+        
+        Args:
+            database_name (str): Name of the database to find
+            parent_id (Optional[str]): Parent page ID to scope the search
+            
+        Returns:
+            Dict containing database info with id, title, and other metadata
+            
+        Raises:
+            NotionDBError: If database cannot be found
+        """
+        try:
+            search_params = {
+                "query": database_name,
+                "filter": {
+                    "value": "database",
+                    "property": "object"
+                },
+                "sort": {
+                    "direction": "ascending",
+                    "timestamp": "last_edited_time"
+                }
+            }
+            
+            response = await self._make_request("POST", "search", search_params)
+            results = response.get('results', [])
+            if not results:
+                raise NotionDBError(f"Could not find database with name: {database_name}")
+                
+            # Find exact match (case-insensitive) with optional parent check
+            for db in results:
+                title = self._extract_page_title(db)
+                if title and title.lower() == database_name.lower():
+                    # If parent_id is specified, check if this database belongs to that parent
+                    if parent_id:
+                        db_parent = db.get('parent', {})
+                        if db_parent.get('type') == 'page_id' and db_parent.get('page_id') == parent_id:
+                            return self._format_database_info(db)
+                    else:
+                        return self._format_database_info(db)
+            
+            parent_msg = f" in parent page {parent_id}" if parent_id else ""
+            raise NotionDBError(f"Could not find exact match for database: {database_name}{parent_msg}")
+            
+        except Exception as e:
+            self.logger.error(f"Error finding database {database_name}: {str(e)}")
+            raise NotionDBError(f"Error finding database {database_name}: {str(e)}") from e
+
+    def _format_database_info(self, db: Dict[str, Any]) -> Dict[str, Any]:
+        """Format database information into a consistent structure.
+        
+        Args:
+            db (Dict[str, Any]): Raw database object from Notion API
+            
+        Returns:
+            Dict[str, Any]: Formatted database information
+        """
+        return {
+            'id': db['id'],
+            'title': self._extract_page_title(db),
+            'url': db['url'],
+            'parent': db.get('parent', {}),
+            'created_time': db['created_time'],
+            'last_edited_time': db['last_edited_time'],
+            'properties': db.get('properties', {})
+        }
