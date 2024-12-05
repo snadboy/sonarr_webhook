@@ -303,6 +303,25 @@ class NotionDB:
             raise NotionDBError("NOTION_PAGE_YOUTUBE environment variable is not set")
         return await self.get_page_info(page_name)
 
+    def _format_page_info(self, page: Dict[str, Any], query_name: Optional[str] = None) -> Dict[str, Any]:
+        """Format page information into a consistent structure.
+        
+        Args:
+            page (Dict[str, Any]): Raw page object from Notion API
+            query_name (Optional[str]): Name used in the query, if available
+            
+        Returns:
+            Dict[str, Any]: Formatted page information
+        """
+        return {
+            'id': page['id'],
+            'title': query_name or self._extract_page_title(page),
+            'url': page['url'],
+            'parent': page.get('parent', {}),
+            'created_time': page['created_time'],
+            'last_edited_time': page['last_edited_time']
+        }
+
     async def find_page(self, page_name: str) -> Dict[str, Any]:
         """Find a specific page by name using Notion's search.
         
@@ -338,14 +357,7 @@ class NotionDB:
             
             # Return first result since we already filtered by name in search
             page = results[0]
-            return {
-                'id': page['id'],
-                'title': self._extract_page_title(page),
-                'url': page['url'],
-                'parent': page.get('parent', {}),
-                'created_time': page['created_time'],
-                'last_edited_time': page['last_edited_time']
-            }
+            return self._format_page_info(page, page_name)
             
         except Exception as e:
             self.logger.error(f"Error finding page {page_name}: {str(e)}")
@@ -388,8 +400,10 @@ class NotionDB:
                 if parent_id:
                     db_parent = db.get('parent', {})
                     if db_parent.get('type') == 'page_id' and db_parent.get('page_id') == parent_id:
+                        db['_query_name'] = database_name  # Add query name to db object
                         return self._format_database_info(db)
                 else:
+                    db['_query_name'] = database_name  # Add query name to db object
                     return self._format_database_info(db)
             
             if parent_id:
@@ -410,7 +424,7 @@ class NotionDB:
         """
         return {
             'id': db['id'],
-            'title': self._extract_page_title(db),
+            'title': db.get('_query_name', self._extract_page_title(db)),  # Fallback to extracted title if query name not provided
             'url': db['url'],
             'parent': db.get('parent', {}),
             'created_time': db['created_time'],
