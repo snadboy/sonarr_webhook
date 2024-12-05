@@ -46,6 +46,8 @@ class NotionDB:
         }
         self.base_url = "https://api.notion.com/v1"
         self.session = None
+        self._page_cache = {}  # Cache for page info
+        self._db_cache = {}  # Cache for database info
 
     async def __aenter__(self):
         self.session = aiohttp.ClientSession(headers=self.headers)
@@ -214,16 +216,9 @@ class NotionDB:
     async def update_youtube_channel_stats(self, stats: Dict[str, Any]) -> None:
         """Update YouTube channel stats in Notion database"""
         try:
-            youtube = await self.notion_youtube
-            db_name = os.getenv('NOTION_DB_YT_CHANNEL')
+            db = await self.notion_db_yt_channel
             
-            self.logger.debug(f"Updating YouTube stats with page_id={youtube['page_id']} and db_name={db_name}")
-            
-            if not db_name:
-                raise NotionDBError("NOTION_DB_YT_CHANNEL environment variable is not set")
-            
-            # Find the database
-            db = await self.find_database(db_name, parent_id=youtube['page_id'])
+            self.logger.debug(f"Updating YouTube stats in database {db['title']}")
             
             # Clear existing entries
             await self.clear_database(db['id'])
@@ -265,6 +260,48 @@ class NotionDB:
             return {"url": str(value)}
         else:
             raise ValueError(f"Unsupported property type: {prop_type}")
+
+    async def get_page_info(self, page_name: str) -> Dict[str, Any]:
+        """Get cached page info including its databases.
+        
+        Args:
+            page_name (str): Name of the page as configured in environment variables
+            
+        Returns:
+            Dict containing page info with 'name', 'page_id', and 'database_ids'
+            
+        Raises:
+            NotionDBError: If page cannot be found
+        """
+        # Check cache first
+        if page_name in self._page_cache:
+            return self._page_cache[page_name]
+            
+        # Get page info
+        page_info = {"name": page_name}
+        page = await self.find_page(page_name)
+        page_info["page_id"] = page['id']
+        page_info["database_ids"] = await self.get_child_databases(page_id=page_info["page_id"])
+        
+        # Cache the result
+        self._page_cache[page_name] = page_info
+        return page_info
+        
+    @property
+    async def notion_page_telly(self) -> Dict[str, Any]:
+        """Get cached Telly page info"""
+        page_name = os.getenv('NOTION_PAGE_TELLY')
+        if not page_name:
+            raise NotionDBError("NOTION_PAGE_TELLY environment variable is not set")
+        return await self.get_page_info(page_name)
+        
+    @property
+    async def notion_page_youtube(self) -> Dict[str, Any]:
+        """Get cached YouTube page info"""
+        page_name = os.getenv('NOTION_PAGE_YOUTUBE')
+        if not page_name:
+            raise NotionDBError("NOTION_PAGE_YOUTUBE environment variable is not set")
+        return await self.get_page_info(page_name)
 
     async def find_page(self, page_name: str) -> Dict[str, Any]:
         """Find a specific page by name using Notion's search.
@@ -386,3 +423,50 @@ class NotionDB:
             'last_edited_time': db['last_edited_time'],
             'properties': db.get('properties', {})
         }
+
+    @property
+    async def notion_db_tv_calendar(self) -> Dict[str, Any]:
+        """Get cached TV Calendar database info"""
+        db_name = os.getenv('NOTION_DB_TV_CALENDAR')
+        if not db_name:
+            raise NotionDBError("NOTION_DB_TV_CALENDAR environment variable is not set")
+        return await self.get_database_info(db_name, os.getenv('NOTION_PAGE_TELLY'))
+
+    @property
+    async def notion_db_yt_channel(self) -> Dict[str, Any]:
+        """Get cached YouTube Channel database info"""
+        db_name = os.getenv('NOTION_DB_YT_CHANNEL')
+        if not db_name:
+            raise NotionDBError("NOTION_DB_YT_CHANNEL environment variable is not set")
+        return await self.get_database_info(db_name, os.getenv('NOTION_PAGE_YOUTUBE'))
+
+    async def get_database_info(self, db_name: str, parent_page_name: Optional[str] = None) -> Dict[str, Any]:
+        """Get cached database info.
+        
+        Args:
+            db_name (str): Name of the database as configured in environment variables
+            parent_page_name (Optional[str]): Name of the parent page if database is a child
+            
+        Returns:
+            Dict containing database info with 'name', 'id', and other metadata
+            
+        Raises:
+            NotionDBError: If database cannot be found
+        """
+        # Check cache first
+        cache_key = f"{parent_page_name}_{db_name}" if parent_page_name else db_name
+        if cache_key in self._db_cache:
+            return self._db_cache[cache_key]
+        
+        # Get parent page ID if specified
+        parent_id = None
+        if parent_page_name:
+            parent_info = await self.get_page_info(parent_page_name)
+            parent_id = parent_info['page_id']
+        
+        # Find database
+        db_info = await self.find_database(db_name, parent_id)
+        
+        # Cache the result
+        self._db_cache[cache_key] = db_info
+        return db_info
