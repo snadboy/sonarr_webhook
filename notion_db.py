@@ -264,13 +264,13 @@ class NotionDB:
             # Clear existing entries
             await self.clear_database(db['id'])
             
-            # Format properties
+            # Format properties with correct property names
             properties = {
-                "Title": self.format_property(NotionPropertyType.TITLE, "Channel Stats"),
-                "Subscribers": self.format_property(NotionPropertyType.NUMBER, stats.get('subscriberCount', 0)),
-                "Videos": self.format_property(NotionPropertyType.NUMBER, stats.get('videoCount', 0)),
-                "Views": self.format_property(NotionPropertyType.NUMBER, stats.get('viewCount', 0)),
-                "Last Updated": self.format_property(NotionPropertyType.DATE, datetime.now().isoformat())
+                "Name": self.format_property(NotionPropertyType.TITLE, "Channel Stats"),
+                "Subscriber Count": self.format_property(NotionPropertyType.NUMBER, stats.get('subscriberCount', 0)),
+                "Video Count": self.format_property(NotionPropertyType.NUMBER, stats.get('videoCount', 0)),
+                "View Count": self.format_property(NotionPropertyType.NUMBER, stats.get('viewCount', 0)),
+                "Updated At": self.format_property(NotionPropertyType.DATE, datetime.now().isoformat())
             }
             
             # Create new entry

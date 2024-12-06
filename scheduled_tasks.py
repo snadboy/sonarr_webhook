@@ -36,7 +36,7 @@ class ScheduledTasks:
 
             # Delete old entries
             filter_params = {
-                "property": "Date",
+                "property": "Air Date",
                 "date": {
                     "before": (datetime.now() - timedelta(days=past_days)).date().isoformat()
                 }
@@ -57,15 +57,17 @@ class ScheduledTasks:
                 episode_title = cal.get('title', 'Unknown Episode')
                 episode_id = cal.get('id', 0)
                 air_date = cal.get('airDate', '2024-12-03')
+                has_file = cal.get('hasFile', False)
 
                 # Get poster URL from show images
-                poster_url = show.get('images', [{'remoteUrl': ''}])[0].get('remoteUrl', '')
-                
+                poster_url = show.get('images', [{'remoteUrl': ''}])[1].get('remoteUrl', '')
                 properties = {
                     "Show Title": self.notion.format_property(NotionPropertyType.RICH_TEXT, f"S{season_number}E{episode_number}: {episode_title}"),
                     "Name": self.notion.format_property(NotionPropertyType.TITLE, show_title),
-                    "Date": self.notion.format_property(NotionPropertyType.DATE, air_date),
+                    "Air Date": self.notion.format_property(NotionPropertyType.DATE, air_date),
                     "Episode ID": self.notion.format_property(NotionPropertyType.NUMBER, episode_id),
+                    # "Status": self.notion.format_property(NotionPropertyType.SELECT, "Upcoming"),
+                    "Available": self.notion.format_property(NotionPropertyType.SELECT, "Downloaded" if has_file else "Not Downloaded"),
                     "Poster": self.notion.format_property(NotionPropertyType.FILES, {
                         "url": poster_url,
                         "name": f"{show_title} Poster"
@@ -82,7 +84,7 @@ class ScheduledTasks:
                             }
                         },
                         {
-                            "property": "Date",
+                            "property": "Air Date",
                             "date": {
                                 "equals": air_date
                             }
@@ -206,8 +208,8 @@ class ScheduledTasks:
         
         # Run initial updates
         asyncio.create_task(tasks.update_databases())
-        asyncio.create_task(tasks.update_youtube_stats())
-        asyncio.create_task(tasks.update_youtube_channels())
+        # asyncio.create_task(tasks.update_youtube_stats())
+        # asyncio.create_task(tasks.update_youtube_channels())
         
         return scheduler
 
